@@ -1,0 +1,10 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+	<AddIn Type="Command">
+		<Assembly>"C:\Users\veram\AppData\Roaming\Autodesk\AutodeskRevitAPITraining\CreationModelPlugin.dll"</Assembly>
+		<AddInId>77186093-7DC0-4C47-A597-2ACD1FD01703</AddInId>
+		<FullClassName>CreationModelPlugin.Main</FullClassName>
+		<VendorId>ADSK</VendorId>
+		<Text>Создание модели</Text>
+	</AddIn>
+</RevitAddIns>
