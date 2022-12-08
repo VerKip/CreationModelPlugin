@@ -18,6 +18,7 @@ namespace CreationModelPlugin
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
+
             Document doc = commandData.Application.ActiveUIDocument.Document;
 
             Level level1 = GetLevels(doc)
@@ -28,21 +29,58 @@ namespace CreationModelPlugin
                 .Where(x => x.Name.Equals("Уровень 2"))
                 .FirstOrDefault();
 
-            CreateWalls(doc, level1.Id, level2.Id, 10000, 5000);
-            List<Wall> walls = GetWalls(doc);
 
-            double sillheight = 600;
+            //Вводные данные для размера домика
+            double width = 10000;
+            double depth = 5000;
+            double sillheight = 600; //высота окон он базового уровня
+            double elevation = 3000; //высота крыши
+
+            CreateWalls(doc, level1.Id, level2.Id, width, depth);
+            List<Wall> walls = GetWalls(doc);
 
             AddDoor(doc, level1, walls[0]);
             AddWindow(doc, level1, walls[1], sillheight);
             AddWindow(doc, level1, walls[2], sillheight);
             AddWindow(doc, level1, walls[3], sillheight);
-
             //AddRoof(doc, level2, walls);
+            AddExtrusionRoof(doc, level2, walls, width, depth, elevation);
 
             return Result.Succeeded;
         }
 
+        private void AddExtrusionRoof(Document doc, Level level2, List<Wall> walls, double width, double depth, double elevation)
+        {
+            RoofType roofType = new FilteredElementCollector(doc)
+                .OfClass(typeof(RoofType))
+                .OfType<RoofType>()
+                .Where(x => x.Name.Equals("Типовой - 400мм"))
+                .Where(x => x.FamilyName.Equals("Basic Roof"))
+                .FirstOrDefault();
+
+            double elevationParam = UnitUtils.ConvertToInternalUnits(elevation, UnitTypeId.Millimeters);
+            double widthParam = UnitUtils.ConvertToInternalUnits(width, UnitTypeId.Millimeters);
+            double depthParam = UnitUtils.ConvertToInternalUnits(depth, UnitTypeId.Millimeters);
+            double dx = widthParam / 2;
+            double dy = depthParam / 2;
+
+            double wallWidth = walls[0].Width;
+            double dt = wallWidth / 2;
+
+            var levelHeight = level2.get_Parameter(BuiltInParameter.LEVEL_ELEV).AsDouble();
+
+            CurveArray curveArray = new CurveArray();
+            curveArray.Append(Line.CreateBound(new XYZ(dx + dt, -dy - dt, levelHeight), new XYZ(-dx - dt, 0, levelHeight + elevationParam)));
+            curveArray.Append(Line.CreateBound(new XYZ(-dx - dt, 0, levelHeight + elevationParam), new XYZ(-dx, dy + dt, levelHeight)));
+
+            using (var t = new Transaction(doc, "Create extrusion roof"))
+            {
+                t.Start();
+                ReferencePlane plane = doc.Create.NewReferencePlane(new XYZ(0, 0, 0), new XYZ(0, 0, dx), new XYZ(0, dx, 0), doc.ActiveView);
+                doc.Create.NewExtrusionRoof(curveArray, plane, level2, roofType, -dx - dt, dx + dt);
+                t.Commit();
+            }
+        }
         private void AddRoof(Document doc, Level level2, List<Wall> walls)
         {
             RoofType roofType = new FilteredElementCollector(doc)
@@ -51,41 +89,42 @@ namespace CreationModelPlugin
                 .Where(x => x.Name.Equals("Типовой - 400мм"))
                 .Where(x => x.FamilyName.Equals("Basic Roof"))
                 .FirstOrDefault();
+
+            double wallWidth = walls[0].Width;
+            double dt = wallWidth / 2;
+            List<XYZ> points = new List<XYZ>();
+            points.Add(new XYZ(-dt, -dt, 0));
+            points.Add(new XYZ(dt, -dt, 0));
+            points.Add(new XYZ(dt, dt, 0));
+            points.Add(new XYZ(-dt, dt, 0));
+            points.Add(new XYZ(-dt, -dt, 0));
+
             using (var t = new Autodesk.Revit.DB.Transaction(doc, "Create roof"))
             {
                 t.Start();
                 Application application = doc.Application;
-            CurveArray footprint = application.Create.NewCurveArray();
-            for (int i = 0; i < 4; i++)
-            {
-                LocationCurve curve = walls[i].Location as LocationCurve;
-                footprint.Append(curve.Curve);
-            }
-            ModelCurveArray footPrintToModelCurveMapping = new ModelCurveArray();
-            FootPrintRoof footprintRoof = doc.Create.NewFootPrintRoof(footprint, level2,
+                CurveArray footprint = application.Create.NewCurveArray();
+                for (int i = 0; i < 4; i++)
+                {
+                    LocationCurve curve = walls[i].Location as LocationCurve;
+                    XYZ p1 = curve.Curve.GetEndPoint(0);
+                    XYZ p2 = curve.Curve.GetEndPoint(1);
+                    Line line = Line.CreateBound(p1 + points[i], p2 + points[i+1]);
+                    footprint.Append(line);
+                }
+                ModelCurveArray footPrintToModelCurveMapping = new ModelCurveArray();
+                FootPrintRoof footprintRoof = doc.Create.NewFootPrintRoof(footprint, level2,
                 roofType, out footPrintToModelCurveMapping);
+
+                foreach(ModelCurve m in footPrintToModelCurveMapping)
+                {
+                    footprintRoof.set_DefinesSlope(m, true);
+                    footprintRoof.set_SlopeAngle(m, 0.5);
+                }
+
                 t.Commit();
             }
         }
-
-        private static List<Level> GetLevels(Document doc)
-        {
-            List<Level> listLevel = new FilteredElementCollector(doc)
-                .OfClass(typeof(Level))
-                .OfType<Level>()
-                .ToList();
-            return listLevel;
-        }
-
-        private static List<Wall> GetWalls(Document doc)
-        {
-            List<Wall> listWall = new FilteredElementCollector(doc)
-                .OfClass(typeof(Wall))
-                .OfType<Wall>()
-                .ToList();
-            return listWall;
-        }
-
         private void CreateWalls(Document doc, ElementId levelId, ElementId elevationLevel, double width, double depth)
         {
             //Список точек, через которые будут проходить стены
@@ -112,7 +151,6 @@ namespace CreationModelPlugin
             }
             transaction.Commit();
         }
-
         private void AddDoor(Document doc, Level levelId, Wall wall)
         {
             FamilySymbol doorType = new FilteredElementCollector(doc)
@@ -172,6 +210,23 @@ namespace CreationModelPlugin
 
                 t.Commit();
             }
+        }
+
+        private static List<Level> GetLevels(Document doc)
+        {
+            List<Level> listLevel = new FilteredElementCollector(doc)
+                .OfClass(typeof(Level))
+                .OfType<Level>()
+                .ToList();
+            return listLevel;
+        }
+        private static List<Wall> GetWalls(Document doc)
+        {
+            List<Wall> listWall = new FilteredElementCollector(doc)
+                .OfClass(typeof(Wall))
+                .OfType<Wall>()
+                .ToList();
+            return listWall;
         }
     }
 }
