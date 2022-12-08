@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Autodesk.Revit.ApplicationServices;
 
 namespace CreationModelPlugin
 {
@@ -29,14 +30,42 @@ namespace CreationModelPlugin
 
             CreateWalls(doc, level1.Id, level2.Id, 10000, 5000);
             List<Wall> walls = GetWalls(doc);
-            
+
+            double sillheight = 600;
 
             AddDoor(doc, level1, walls[0]);
-            AddWindow(doc, level1, walls[1]);
-            AddWindow(doc, level1, walls[2]);
-            AddWindow(doc, level1, walls[3]);
+            AddWindow(doc, level1, walls[1], sillheight);
+            AddWindow(doc, level1, walls[2], sillheight);
+            AddWindow(doc, level1, walls[3], sillheight);
+
+            //AddRoof(doc, level2, walls);
 
             return Result.Succeeded;
+        }
+
+        private void AddRoof(Document doc, Level level2, List<Wall> walls)
+        {
+            RoofType roofType = new FilteredElementCollector(doc)
+                .OfClass(typeof(RoofType))
+                .OfType<RoofType>()
+                .Where(x => x.Name.Equals("Типовой - 400мм"))
+                .Where(x => x.FamilyName.Equals("Basic Roof"))
+                .FirstOrDefault();
+            using (var t = new Autodesk.Revit.DB.Transaction(doc, "Create roof"))
+            {
+                t.Start();
+                Application application = doc.Application;
+            CurveArray footprint = application.Create.NewCurveArray();
+            for (int i = 0; i < 4; i++)
+            {
+                LocationCurve curve = walls[i].Location as LocationCurve;
+                footprint.Append(curve.Curve);
+            }
+            ModelCurveArray footPrintToModelCurveMapping = new ModelCurveArray();
+            FootPrintRoof footprintRoof = doc.Create.NewFootPrintRoof(footprint, level2,
+                roofType, out footPrintToModelCurveMapping);
+                t.Commit();
+            }
         }
 
         private static List<Level> GetLevels(Document doc)
@@ -113,7 +142,7 @@ namespace CreationModelPlugin
             }
 
         }
-        private void AddWindow(Document doc, Level levelId, Wall wall)
+        private void AddWindow(Document doc, Level levelId, Wall wall, double sillheight)
         {
             FamilySymbol windowType = new FilteredElementCollector(doc)
                 .OfClass(typeof(FamilySymbol))
@@ -136,7 +165,11 @@ namespace CreationModelPlugin
                     windowType.Activate();
                     doc.Regenerate();
                 }
-                doc.Create.NewFamilyInstance(point, windowType, wall, levelId, StructuralType.NonStructural);
+
+                double sillheightParam = UnitUtils.ConvertToInternalUnits(sillheight, UnitTypeId.Millimeters);
+                FamilyInstance newWindow = doc.Create.NewFamilyInstance(point, windowType, wall, levelId, StructuralType.NonStructural);
+                newWindow.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM).Set(sillheightParam);
+
                 t.Commit();
             }
         }
